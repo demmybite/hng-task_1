@@ -17,11 +17,23 @@ generate_password() {
 
 # Read input file and process each line
 while IFS=';' read -r username groups; do
+
+   username=$(echo "$username" | xargs)
+   groups=$(echo "$groups" | xargs)
+
     # Check if user already exists, then create personal group then add user to personal group 
     if id "$username" &>/dev/null; then
         echo "User $username already exists."
         sudo groupadd "$username"
         sudo useradd -m -g "$username" "$username"
+
+        for group in "${group_array[@]}"; do
+            if ! getent group "$group" &>/dev/null; then
+               sudo groupadd "$group"
+            fi
+            sudo usermod -aG "$group" "$username"
+        done
+
     else
         # Create user
         sudo useradd "$username"
