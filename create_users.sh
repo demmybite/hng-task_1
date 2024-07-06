@@ -1,88 +1,64 @@
 #!/bin/bash
 
-# Check if the script is run as root
-if [[ $EUID -ne 0 ]]; then
-   echo "This script needs root priviledges"
-   exit 1
-fi
-
-# Log file and password file
-LOG_FILE="/var/log/user_management.log"
-PASSWORD_FILE="/var/secure/user_passwords.txt"
-
-# Create the secure directory if it doesn't exist
-mkdir -p /var/secure
-chmod 700 /var/secure
-
-# Check if the input file is provided
-if [ -z "$1" ]; then
-    echo "Usage: $0 <user-file>"
+# Check if an input file is provided
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <input_file>"
     exit 1
 fi
 
-# Ensure log and password files exist
-touch $LOG_FILE
-touch $PASSWORD_FILE
-chmod 600 $PASSWORD_FILE
+input_file="$1"
+log_file="/var/log/user_management.log"
+password_file="/var/secure/user_passwords.txt"
 
 # Function to generate a random password
 generate_password() {
-    tr -dc A-Za-z0-9 </dev/urandom | head -c 12 ; echo ''
+    tr -dc '[:alnum:]' < /dev/urandom | head -c 12
 }
 
-# Process the input file
+# Read input file and process each line
 while IFS=';' read -r username groups; do
-    # Trim whitespace
-    username=$(echo $username | xargs)
-    groups=$(echo $groups | xargs)
-
     # Check if user already exists
     if id "$username" &>/dev/null; then
-        echo "User $username already exists, adding to specified groups." | tee -a $LOG_FILE
+        echo "User $username already exists."
     else
-        # Create the user with their personal group
-        useradd -m -s /bin/bash "$username" -g "$username"
-        if [ $? -ne 0 ]; then
-            echo "Failed to create user $username" | tee -a $LOG_FILE
-            continue
-        fi
-        echo "Created user $username with personal group $username" | tee -a $LOG_FILE
+        # Create user
+        sudo useradd "$username"
     fi
 
-    # Add user to additional groups
-    IFS=',' read -ra ADDR <<< "$groups"
-    for group in "${ADDR[@]}"; do
-        group=$(echo $group | xargs) # Trim whitespace
-        if [ -n "$group" ]; then
-            # Create group if it doesn't exist
-            if ! getent group "$group" > /dev/null; then
-                groupadd "$group"
-                if [ $? -ne 0 ]; then
-                    echo "Failed to create group $group" | tee -a $LOG_FILE
-                    continue
-                fi
-                echo "Created group $group" | tee -a $LOG_FILE
-            fi
-            usermod -aG "$group" "$username"
-            if [ $? -ne 0 ]; then
-                echo "Failed to add user $username to group $group" | tee -a $LOG_FILE
-            else
-                echo "Added user $username to group $group" | tee -a $LOG_FILE
-            fi
+    # Create personal group (if not exists)
+    if ! getent group "$username" &>/dev/null; then
+        sudo groupadd "$username"
+    fi
+
+    # Add user to personal group
+    sudo usermod -aG "$username" "$username"
+
+    # Create additional groups (if not exists)
+    IFS=',' read -ra group_array <<< "$groups"
+    for group in "${group_array[@]}"; do
+        if ! getent group "$group" &>/dev/null; then
+            sudo groupadd "$group"
         fi
+        sudo usermod -aG "$group" "$username"
     done
 
-    # Generate and set a random password for the user if they were just created
-    if ! id "$username" &>/dev/null; then
-        password=$(generate_password)
-        echo "$username:$password" | chpasswd
-        if [ $? -ne 0 ]; then
-            echo "Failed to set password for $username" | tee -a $LOG_FILE
-        else
-            echo "Set password for $username" | tee -a $LOG_FILE
-            echo "$username,$password" >> $PASSWORD_FILE
-        fi
-    fi
-done < "$1"
+    # Generate random password
+    password=$(generate_password)
 
-echo "User creation process completed." | tee -a $LOG_FILE
+    # Set password for user
+    echo "$password" | sudo passwd --stdin "$username"
+
+    # Log actions
+    echo "User $username created with groups: $groups" >> "$log_file"
+
+    # Store password securely
+    echo "$username,$password" >> "$password_file"
+
+    # Set permissions for home directory
+    home_dir="/home/$username"
+    sudo mkdir -p "$home_dir"
+    sudo chown "$username:$username" "$home_dir"
+    sudo chmod 700 "$home_dir"
+done < "$input_file"
+
+echo "User creation and setup completed successfully."
