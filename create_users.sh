@@ -1,77 +1,64 @@
 #!/bin/bash
 
-# Check if the script is run with root privileges
-if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root"
-  exit 1
-fi
-
-# Check if the input file is provided as an argument and direct on what to do if input file is not provided
+# Check if an input file is provided
 if [ $# -ne 1 ]; then
-  echo "Please run this instead: $0 <name-of-text-file>"
-  exit 1
+    echo "Usage: $0 <input_file>"
+    exit 1
 fi
 
-INPUT_FILE="$1"
-LOG_FILE="/var/log/user_management.log"
-PASSWORD_FILE="/var/secure/user_passwords.txt"
+input_file="$1"
+log_file="/var/log/user_management.log"
+password_file="/var/secure/user_passwords.txt"
 
-# Ensure the log and password files exist and have the correct permissions
-touch "$LOG_FILE"
-chmod 644 "$LOG_FILE"
-mkdir -p "$(dirname "$PASSWORD_FILE")"
-touch "$PASSWORD_FILE"
-chmod 600 "$PASSWORD_FILE"
-chown root:root "$PASSWORD_FILE"
-
-# Function to log messages
-log_message() {
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+# Function to generate a random password
+generate_password() {
+    tr -dc '[:alnum:]' < /dev/urandom | head -c 12
 }
 
-# Read the input file and process each line
-while IFS=";" read -r username groups; do
-  # Trim any leading or trailing whitespace from username and groups
-  username=$(echo "$username" | xargs)
-  groups=$(echo "$groups" | xargs)
+# Read input file and process each line
+while IFS=';' read -r username groups; do
+    # Check if user already exists
+    if id "$username" &>/dev/null; then
+        echo "User $username already exists."
+    else
+        # Create user
+        sudo useradd "$username"
+    fi
 
-  # Skip empty lines or lines with empty username
-  if [ -z "$username" ]; then
-    continue
-  fi
+    # Create personal group (if not exists)
+    if ! getent group "$username" &>/dev/null; then
+        sudo groupadd "$username"
+    fi
 
-  # Create the primary group with the same name as the username
-  if ! getent group "$username" > /dev/null; then
-    groupadd "$username"
-    log_message "Group $username created."
-  else
-    log_message "Group $username already exists."
-  fi
+    # Add user to personal group
+    sudo useradd -m -g "$username" "$username"
 
-  # Create the user with the primary group
-  if ! id "$username" > /dev/null 2>&1; then
-    useradd -m -g "$username" "$username"
-    log_message "User $username created with primary group $username."
-  else
-    log_message "User $username already exists."
-  fi
+    # Create additional groups (if not exists)
+    IFS=',' read -ra group_array <<< "$groups"
+    for group in "${group_array[@]}"; do
+        if ! getent group "$group" &>/dev/null; then
+            sudo groupadd "$group"
+        fi
+        sudo usermod -aG "$group" "$username"
+    done
 
-  # Add user to additional groups
-  if [ -n "$groups" ]; then
-    usermod -aG "$(echo $groups | tr ',' ' ')" "$username"
-    log_message "User $username added to groups: $groups."
-  fi
+     # Generate random password
+    password=$(generate_password)
 
-  # Generate a random password for the user
-  password=$(openssl rand -base64 12)
-  echo "$username:$password" | chpasswd
-  log_message "Password set for user $username."
+    # Set password for user
+    echo "$password" | sudo passwd --stdin "$username"
 
-  # Store the password securely
-  echo "$username,$password" >> "$PASSWORD_FILE"
+    # Log actions
+    echo "User $username created with groups: $groups" >> "$log_file"
 
-done < "$INPUT_FILE"
+    # Store password securely
+    echo "$username,$password" >> "$password_file"
 
-log_message "User creation script completed successfully."
+    # Set permissions for home directory
+    home_dir="/home/$username"
+    sudo mkdir -p "$home_dir"
+    sudo chown "$username:$username" "$home_dir"
+    sudo chmod 700 "$home_dir"
+done < "$input_file"
 
-exit 0
+echo "User creation and setup completed successfully."
