@@ -35,12 +35,10 @@ while IFS=';' read -r username groups; do
 
     # Create additional groups (if not exists)
     IFS=',' read -ra group_array <<< "$groups"
-    for group in "${group_array[@]}"; do
-        if ! getent group "$group" &>/dev/null; then
-            sudo groupadd "$group"
-        fi
-        sudo usermod -aG "$group" "$username"
-    done
+    if [ -n "$groups" ]; then
+      usermod -aG "$(echo $groups | tr ',' ' ')" "$username"
+      log_message "User $username added to groups: $groups."
+    fi
 
     # Ensure user belongs to all specified groups
     for group in "${group_array[@]}"; do
