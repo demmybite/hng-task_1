@@ -2,7 +2,7 @@
 
 # Check if the script is run as root
 if [[ $EUID -ne 0 ]]; then
-   echo "This script needs root priviledge"
+   echo "This script needs root priviledges"
    exit 1
 fi
 
@@ -32,22 +32,22 @@ generate_password() {
 
 # Process the input file
 while IFS=';' read -r username groups; do
-    username=$(echo $username | xargs) # Trim whitespace
-    groups=$(echo $groups | xargs) # Trim whitespace
+    # Trim whitespace
+    username=$(echo $username | xargs)
+    groups=$(echo $groups | xargs)
 
     # Check if user already exists
     if id "$username" &>/dev/null; then
-        echo "User $username already exists, skipping." | tee -a $LOG_FILE
-        continue
+        echo "User $username already exists, adding to specified groups." | tee -a $LOG_FILE
+    else
+        # Create the user with their personal group
+        useradd -m -s /bin/bash "$username" -g "$username"
+        if [ $? -ne 0 ]; then
+            echo "Failed to create user $username" | tee -a $LOG_FILE
+            continue
+        fi
+        echo "Created user $username with personal group $username" | tee -a $LOG_FILE
     fi
-
-    # Create the user with their personal group
-    useradd -m -s /bin/bash "$username" -g "$username"
-    if [ $? -ne 0 ]; then
-        echo "Failed to create user $username" | tee -a $LOG_FILE
-        continue
-    fi
-    echo "Created user $username with personal group $username" | tee -a $LOG_FILE
 
     # Add user to additional groups
     IFS=',' read -ra ADDR <<< "$groups"
@@ -72,14 +72,16 @@ while IFS=';' read -r username groups; do
         fi
     done
 
-    # Generate and set a random password for the user
-    password=$(generate_password)
-    echo "$username:$password" | chpasswd
-    if [ $? -ne 0 ]; then
-        echo "Failed to set password for $username" | tee -a $LOG_FILE
-    else
-        echo "Set password for $username" | tee -a $LOG_FILE
-        echo "$username,$password" >> $PASSWORD_FILE
+    # Generate and set a random password for the user if they were just created
+    if ! id "$username" &>/dev/null; then
+        password=$(generate_password)
+        echo "$username:$password" | chpasswd
+        if [ $? -ne 0 ]; then
+            echo "Failed to set password for $username" | tee -a $LOG_FILE
+        else
+            echo "Set password for $username" | tee -a $LOG_FILE
+            echo "$username,$password" >> $PASSWORD_FILE
+        fi
     fi
 done < "$1"
 
