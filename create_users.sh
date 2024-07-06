@@ -31,7 +31,7 @@ while IFS=';' read -r username groups; do
     fi
 
     # Add user to personal group
-    sudo usermod -aG "$username" "$username"
+    sudo useradd -m -g "$username" "$username"
 
     # Create additional groups (if not exists)
     IFS=',' read -ra group_array <<< "$groups"
