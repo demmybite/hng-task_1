@@ -17,9 +17,11 @@ generate_password() {
 
 # Read input file and process each line
 while IFS=';' read -r username groups; do
-    # Check if user already exists
+    # Check if user already exists, then create personal group then add user to personal group 
     if id "$username" &>/dev/null; then
         echo "User $username already exists."
+        sudo groupadd "$username"
+        sudo useradd -m -g "$username" "$username"
     else
         # Create user
         sudo useradd "$username"
