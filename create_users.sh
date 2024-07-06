@@ -42,6 +42,13 @@ while IFS=';' read -r username groups; do
         sudo usermod -aG "$group" "$username"
     done
 
+    # Ensure user belongs to all specified groups
+    for group in "${group_array[@]}"; do
+        if ! id "$username" | grep -q "$group"; then
+            sudo usermod -aG "$group" "$username"
+        fi
+    done
+
     # Generate random password
     password=$(generate_password)
 
